@@ -36,12 +36,7 @@ __global__ void generate_kernel(curandState* state, int* result)
 	result[id] += count;
 	//printf("%d\n", result[id]);
 
-	/*for (int n = 0; n < 16 * 16; n++) {
-		if (result[n] == 1)
-			printf("%d - YES\n", result[n]);
-		else
-			printf("%d - NO\n", result[n]);
-	}*/
+	
 }
 
 
@@ -66,11 +61,7 @@ __global__ void compare_kernel(int* arr)
 
 int main(int argc, char* argv[])
 {
-	/*if (LoadLibraryA("nvcuda.dll") != nullptr)
-	{
-		printf("CUDA not found on device");
-		exit(EXIT_FAILURE);
-	}*/
+	
 
 	// Pseudo-random variables
 	int i, total, cotal;
