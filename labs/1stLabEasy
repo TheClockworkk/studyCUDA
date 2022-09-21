@@ -7,9 +7,9 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-__global__ void setup_kernel(curandState* state)
+__global__ void setup_kernel(curandState * state)
 {
-	int id = threadIdx.x + blockIdx.x * 16;
+	int id = threadIdx.x + blockIdx.x * 1024;
 	// Each thread gets same seed, a different sequence
 	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
 	curand_init(0, id, 0, &state[id]);
@@ -17,7 +17,7 @@ __global__ void setup_kernel(curandState* state)
 
 __global__ void generate_kernel(curandState* state, int* result)
 {
-	int id = threadIdx.x + blockIdx.x * 16;
+	int id = threadIdx.x + blockIdx.x * 1024;
 	int count = 0;
 	unsigned int x;
 	// Copy state to local memory for efficiency
@@ -32,18 +32,15 @@ __global__ void generate_kernel(curandState* state, int* result)
 	state[id] = localState;
 	// Store results 
 	result[id] += count;
-	//printf("%d\n", result[id]);
-
-	
 }
 
 
 
 __global__ void compare_kernel(int* arr)
 {
-	int idx = threadIdx.x + blockIdx.x * blockDim.x;// blockDim.x - подтягивает второе значение из compare_kernel<<<16,1>>>
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;// blockDim.x - подтягивает второе значение из compare_kernel<<<1024,1>>>
 	int offset = blockDim.x * gridDim.x;
-	for (int n = idx; n < 16 * 16; n += offset) {
+	for (int n = idx; n < 1024 * 1024; n += offset) {
 
 		if (arr[n] != 1) {
 			printf("%d - NO\n", arr[n]);
@@ -59,7 +56,7 @@ __global__ void compare_kernel(int* arr)
 
 int main(int argc, char* argv[])
 {
-	
+
 
 	// Pseudo-random variables
 	int i, total, cotal;
@@ -70,28 +67,28 @@ int main(int argc, char* argv[])
 	int* devResultsForComparsion;
 
 	// Allocate space for results on host
-	hostResults = (int*)calloc(16 * 16, sizeof(int));
+	hostResults = (int*)calloc(1024 * 1024, sizeof(int));
 	// Allocate space for results on device
-	cudaMalloc((void**)&devResults, 16 * 16 * sizeof(int));
+	cudaMalloc((void**)&devResults, 1024 * 1024 * sizeof(int));
 	// Set results to 0
-	cudaMemset(devResults, 0, 16 * 16 * sizeof(int));
+	cudaMemset(devResults, 0, 1024 * 1024 * sizeof(int));
 	// Allocate space for prng states on device
-	cudaMalloc((void**)&devStates, 16 * 16 *
+	cudaMalloc((void**)&devStates, 1024 * 1024 *
 		sizeof(curandState));
 
 
 	//Setup prng states
-	setup_kernel << <16, 16 >> > (devStates);
+	setup_kernel << <1024, 1024 >> > (devStates);
 	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
 	for (i = 0; i < 9; i++) {
-		generate_kernel << <16, 16 >> > (devStates, devResults);
+		generate_kernel << <1024, 1024 >> > (devStates, devResults);
 	}// Copy device memory to host
-	cudaMemcpy(hostResults, devResults, 16 * 16 *
+	cudaMemcpy(hostResults, devResults, 1024 * 1024 *
 		sizeof(int), cudaMemcpyDeviceToHost);
 	// Show result - always fixed, based on seed from setup_kernel
 	total = 0;
 	cotal = 0;
-	for (i = 0; i < 16 * 16; i++) {
+	for (i = 0; i < 1024 * 1024; i++) {
 		total += hostResults[i];
 		cotal++;
 		//printf("%d\n",hostResults[i]);
@@ -102,14 +99,14 @@ int main(int argc, char* argv[])
 
 
 	// memory allocation for compare_kernel. Putting on devResultsForComparsion hostResults from generate_kernel. Than sending devResultsForComparsion to compare_kernel
-	cudaMalloc((void**)&devResultsForComparsion, 16 * 16 * sizeof(int));
-	cudaMemset(devResultsForComparsion, 0, 16 * 16 * sizeof(int));
-	cudaMemcpy(devResultsForComparsion, hostResults, 16 * 16 *
+	cudaMalloc((void**)&devResultsForComparsion, 1024 * 1024 * sizeof(int));
+	cudaMemset(devResultsForComparsion, 0, 1024 * 1024 * sizeof(int));
+	cudaMemcpy(devResultsForComparsion, hostResults, 1024 * 1024 *
 		sizeof(int), cudaMemcpyHostToDevice);
 
 
 	// hostResults (pseudo-random array) -> devResultsForComparsion -> compare_kernel(devResultsForComparsion, deviceCompareResults) -> deviceCompareResults -> hostCompareResults
-	compare_kernel << <16,  1>> > (devResultsForComparsion);
+	compare_kernel << <1024, 1 >> > (devResultsForComparsion);
 
 
 	cudaFree(devStates);
