@@ -1,1 +1,161 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+//#include <libloaderapi.h>
 
+__global__ void setup_kernel(curandState* state)
+{
+	int id = threadIdx.x + blockIdx.x * 256;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, int* result)
+{
+	int id = threadIdx.x + blockIdx.x * 256;
+	int count = 0;
+	unsigned int x;
+	// Copy state to local memory for efficiency
+	curandState localState = state[id];
+	// Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+	for (int n = 0; n < 1; n++) {
+		x = curand(&localState);
+		// Check if low bit set
+		if(x & 1) { count++; }
+	}
+	// Copy state back to global memory 
+	state[id] = localState;
+	// Store results 
+	result[id] += count;
+	//printf("%d\n", result[id]);
+
+	/*for (int n = 0; n < 256 * 256; n++) {
+		if (result[n] == 1)
+			printf("%d - YES\n", result[n]);
+		else
+			printf("%d - NO\n", result[n]);
+	}*/
+}
+
+
+
+/*__global__ void compare_kernel(int* arr, char* yesNo)
+{
+	int idx = threadIdx.x + blockIdx.x * 256;
+	int offset = blockDim.x * gridDim.x;
+	for (int n = idx; n < 256 * 256; n += offset) {
+		//printf("%d\n", arr[n]);
+
+		if (arr[n] == 1) {
+			printf("%d - YES\n", arr[n]);
+		}
+		else {
+			printf("%d - NO\n", arr[n]);
+		}
+		
+		if(arr[n] == 1)
+			yesNo[n] = char("Y");
+		else
+			yesNo[n] = char("N"); 
+	}
+
+}*/
+
+
+int main(int argc, char* argv[])
+{
+	/*if (LoadLibraryA("nvcuda.dll") != nullptr)
+	{
+		printf("CUDA not found on device");
+		exit(EXIT_FAILURE);
+	}*/
+	
+	// Pseudo-random variables
+	int i, total, cotal;
+	curandState* devStates;
+	int* devResults, * hostResults;
+
+	///////////////////////////////////////////////////////////////////
+	// YES NO variables
+	/*int* devResultsForComparsion;
+	char* deviceCompareResults, *hostCompareResults;*/
+	///////////////////////////////////////////////////////////////////
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(256 * 256, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, 256 * 256 * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, 256 * 256 * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, 256 * 256 *
+		sizeof(curandState));
+
+
+	//Setup prng states
+	setup_kernel << <256, 256 >> > (devStates);
+	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+	for (i = 0; i < 9; i++) {
+		generate_kernel << <256, 256 >> > (devStates,
+			devResults);
+	}// Copy device memory to host
+	cudaMemcpy(hostResults, devResults, 256 * 256 *
+		sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+	total = 0;
+	cotal = 0;
+	for (i = 0; i < 256 * 256; i++) {
+		total += hostResults[i];
+		cotal++;
+		if(hostResults[i] == 1)
+			printf("%d - YES\n", hostResults[i]);
+		else 
+			printf("%d - NO\n", hostResults[i]);
+	}
+	
+	printf("%d\n", cotal);
+
+
+
+	///////////////////////////////////////////////////////////////////
+	//printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
+
+
+	// memory allocation for compare_kernel. Putting on devResultsForComparsion hostResults from generate_kernel. Than sending devResultsForComparsion to compare_kernel
+	/*cudaMalloc((void**)&devResultsForComparsion, 256 * 256 * sizeof(int));
+	cudaMemset(devResultsForComparsion, 0, 256 * 256 * sizeof(int));
+	cudaMemcpy(devResultsForComparsion, hostResults, 256 * 256 *
+		sizeof(int), cudaMemcpyHostToDevice);
+
+
+	//  variable creation for compare_kernel. deviceCompareResults - result of compare_kernel. Than putting result on host at hostCompareResults.
+	hostCompareResults = (char*)calloc(256 * 256, sizeof(char));
+
+	cudaMalloc((void**)&deviceCompareResults, 256 * 256 * sizeof(char));
+	cudaMemset(deviceCompareResults, 0, 256 * 256 * sizeof(char));
+	
+	// hostResults (pseudo-random array) -> devResultsForComparsion -> compare_kernel(devResultsForComparsion, deviceCompareResults) -> deviceCompareResults -> hostCompareResults
+	compare_kernel << <256, 256 >> > (devResultsForComparsion, deviceCompareResults);
+	cudaMemcpy(hostCompareResults, deviceCompareResults, 256 * 256 *
+		sizeof(char), cudaMemcpyDeviceToHost);
+
+	for (i = 0; i < 256 * 256; i++) {
+		
+		printf("%s\n", hostCompareResults[i]);
+	}*/
+	
+	///////////////////////////////////////////////////////////////////
+
+
+	cudaFree(devStates);
+	cudaFree(devResults);
+	//cudaFree(devResultsForComparsion);
+	//cudaFree(deviceCompareResults);
+	free(hostResults);
+	//free(hostCompareResults);
+	return EXIT_SUCCESS;
+
+}
