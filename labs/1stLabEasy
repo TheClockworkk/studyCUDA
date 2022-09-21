@@ -7,8 +7,6 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-//#include <libloaderapi.h>
-
 __global__ void setup_kernel(curandState* state)
 {
 	int id = threadIdx.x + blockIdx.x * 16;
