@@ -1,0 +1,214 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#define SIZE 1024
+//#define SIZE 256
+//#define SIZE 128
+//#define SIZE 64
+//#define SIZE 32
+//#define SIZE 16
+//#define SIZE 8
+//#define SIZE 4
+//#define SIZE 2
+
+__global__ void setup_kernel(curandState * state)
+{
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, int* result)
+{
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	int count = 0;
+	unsigned int x;
+	// Copy state to local memory for efficiency
+	curandState localState = state[id];
+	// Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+	for (int n = 0; n < 1; n++) {
+		x = curand(&localState);
+		// Check if low bit set
+		if (x & 1) { count++; }
+	}
+	// Copy state back to global memory 
+	state[id] = localState;
+	// Store results 
+	result[id] += count;
+}
+
+__global__ void square_sum(int* arr, float* resultSquareMiddle, float middleArithmetic)
+{
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	int offset = blockDim.x * gridDim.x;
+
+	__shared__ float buf[256];
+	int bufId = threadIdx.x;
+
+	long double sum = 0;
+
+	for (int n = idx; n < SIZE * SIZE; n += offset) {
+		//printf("%d\n",arr[n]);
+		sum += pow(arr[n] - middleArithmetic, 2);
+	}
+
+	buf[bufId] = sum;
+	__syncthreads();
+	
+	int i = blockDim.x / 2;
+	while (i != 0)
+	{
+		if (bufId < i)
+			buf[bufId] += buf[bufId + i];
+		__syncthreads();
+		i /= 2;
+	}
+	if (bufId == 0) {
+		resultSquareMiddle[blockIdx.x] = buf[0];
+		__syncthreads();
+	}
+}
+
+__global__ void middle_arithmetic(int* arr, float* resultMiddle)
+{
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	int offset = blockDim.x * gridDim.x;
+
+	__shared__ float buf[256];
+	int bufId = threadIdx.x;
+
+	long double sum = 0;
+
+	for (int n = idx; n < SIZE * SIZE; n += offset) {
+		//printf("%d\n", arr[n]);
+		sum += arr[n];
+	}
+
+	buf[bufId] = sum;
+	__syncthreads();
+
+	int i = blockDim.x / 2;
+	while (i != 0)
+	{
+		if (bufId < i)
+			buf[bufId] += buf[bufId + i];
+		__syncthreads();
+		i /= 2;
+	}
+	if (bufId == 0) {
+		resultMiddle[blockIdx.x] = buf[0];
+		__syncthreads();
+	}
+}
+
+int main(int argc, char* argv[])
+{
+	// Pseudo-random variables
+	int i, total, cotal;
+	curandState* devStates;
+	int* devResults, * hostResults;
+
+	// square_sum variables
+	int* devResultsForComparsion;
+	float* hostThreadsResSum, *hostThreadsResMiddle;
+	float* devThreadsResSum, * devThreadsResMiddle;
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
+
+	//Setup prng states
+	setup_kernel <<< SIZE, SIZE >>> (devStates);
+	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+	for (i = 0; i < 9; i++) {
+		generate_kernel <<< SIZE, SIZE >>> (devStates, devResults);
+	}// Copy device memory to host
+	cudaDeviceSynchronize();
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+	total = 0;
+	cotal = 0;
+	for (i = 0; i < SIZE * SIZE; i++) {
+		total += hostResults[i];
+		cotal++;
+		printf("%d\n",hostResults[i]);
+	}
+
+	// memory allocation for operations with vector
+	cudaMalloc((void**)&devResultsForComparsion, SIZE * SIZE * sizeof(int));
+	cudaMemset(devResultsForComparsion, 0, SIZE * SIZE * sizeof(int));
+	cudaMemcpy(devResultsForComparsion, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToDevice);
+
+	// memory allocation for middle_arithmetic
+	hostThreadsResMiddle = (float*)calloc(SIZE * SIZE, sizeof(float));
+	cudaMalloc((void**)&devThreadsResMiddle, SIZE * SIZE * sizeof(float));
+	// Set results to 0
+	cudaMemset(devThreadsResMiddle, 0, SIZE * SIZE * sizeof(float));
+
+	middle_arithmetic << <32, 1 >> > (devResultsForComparsion, devThreadsResMiddle);
+	cudaDeviceSynchronize();
+
+	cudaMemcpy(hostThreadsResMiddle, devThreadsResMiddle, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+
+	float sum = 0;
+	for (int i = 0; i < SIZE * SIZE; i++)
+	{
+		sum += hostThreadsResMiddle[i];
+	}
+	sum /= (SIZE * SIZE);
+
+
+	// memory allocation for square_sum
+
+	hostThreadsResSum = (float*)calloc(SIZE * SIZE, sizeof(float));
+	cudaMalloc((void**)&devThreadsResSum, SIZE * SIZE * sizeof(float));
+	// Set results to 0
+	cudaMemset(devThreadsResSum, 0, SIZE * SIZE * sizeof(float));
+
+	square_sum <<<32, 1 >>> (devResultsForComparsion, devThreadsResSum, sum);
+	cudaDeviceSynchronize();
+
+	cudaMemcpy(hostThreadsResSum, devThreadsResSum, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+
+	float squareSum = 0;
+	for (int i = 0; i < SIZE * SIZE; i++)
+	{
+		squareSum += hostThreadsResSum[i];
+	}
+
+	float standardDeviation = 0;
+	standardDeviation = sqrt(squareSum/float(SIZE * SIZE));
+
+	printf("Elements count = %d\n", cotal);
+	printf("Midddle arithmetic = %f\n", sum);
+	printf("Sum of squares minus midddle arithmetic = %f\n", squareSum);
+	printf("Standart deviation = %f\n", standardDeviation);
+	
+	cudaFree(devStates);
+	cudaFree(devResults);
+	cudaFree(devResultsForComparsion);
+	cudaFree(devThreadsResSum);
+	cudaFree(devThreadsResMiddle);
+	free(hostThreadsResMiddle);
+	free(hostResults);
+	free(hostThreadsResSum);
+	return EXIT_SUCCESS;
+
+}
