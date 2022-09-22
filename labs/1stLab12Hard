@@ -1,0 +1,117 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+__global__ void setup_kernel(curandState * state)
+{
+	int id = threadIdx.x + blockIdx.x * 1024;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, int* result)
+{
+	int id = threadIdx.x + blockIdx.x * 1024;
+	int count = 0;
+	unsigned int x;
+	// Copy state to local memory for efficiency
+	curandState localState = state[id];
+	// Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+	for (int n = 0; n < 1; n++) {
+		x = curand(&localState);
+		// Check if low bit set
+		if (x & 1) { count++; }
+	}
+	// Copy state back to global memory 
+	state[id] = localState;
+	// Store results 
+	result[id] += count;
+}
+
+
+
+__global__ void square_sum(int* arr)
+{
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	int offset = blockDim.x * gridDim.x;
+
+	long double sum = 0;
+
+	for (int n = idx; n < 1024 * 1024; n += offset) {
+		printf("%d\n",arr[n]);
+		sum += pow (arr[n],2);
+	}
+
+	printf("\nSum of squares = %f\n", sum);
+
+}
+
+
+int main(int argc, char* argv[])
+{
+
+
+	// Pseudo-random variables
+	int i, total, cotal;
+	curandState* devStates;
+	int* devResults, * hostResults;
+
+	// square_sum variables
+	int* devResultsForComparsion;
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(1024 * 1024, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, 1024 * 1024 * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, 1024 * 1024 * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, 1024 * 1024 *
+		sizeof(curandState));
+
+
+	//Setup prng states
+	setup_kernel << <1024, 1024 >> > (devStates);
+	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+	for (i = 0; i < 9; i++) {
+		generate_kernel << <1024, 1024 >> > (devStates, devResults);
+	}// Copy device memory to host
+	cudaMemcpy(hostResults, devResults, 1024 * 1024 *
+		sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+	total = 0;
+	cotal = 0;
+	for (i = 0; i < 1024 * 1024; i++) {
+		total += hostResults[i];
+		cotal++;
+		//printf("%d\n",hostResults[i]);
+	}
+
+	printf("Elements count = %d\n\n", cotal);
+
+
+
+	// memory allocation for compare_kernel. Putting on devResultsForComparsion hostResults from generate_kernel. Than sending devResultsForComparsion to compare_kernel
+	cudaMalloc((void**)&devResultsForComparsion, 1024 * 1024 * sizeof(int));
+	cudaMemset(devResultsForComparsion, 0, 1024 * 1024 * sizeof(int));
+	cudaMemcpy(devResultsForComparsion, hostResults, 1024 * 1024 *
+		sizeof(int), cudaMemcpyHostToDevice);
+
+
+	// hostResults (pseudo-random array) -> devResultsForComparsion -> compare_kernel(devResultsForComparsion, deviceCompareResults) -> deviceCompareResults -> hostCompareResults
+	square_sum << <1, 1 >> > (devResultsForComparsion);
+
+
+	cudaFree(devStates);
+	cudaFree(devResults);
+	cudaFree(devResultsForComparsion);
+	free(hostResults);
+	return EXIT_SUCCESS;
+
+}
