@@ -1,0 +1,40 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <math.h>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+
+
+
+__global__ void compare_kernel(int* result)
+{
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;// blockDim.x - подтягивает второе значение из compare_kernel<<<1024,1>>>
+	int offset = blockDim.x * gridDim.x;
+
+	for (int n = 0; n < 10000 * 10000; n ++) {
+		result[n] = 2;
+	}
+}
+
+
+int main(int argc, char* argv[])
+{
+	FILE* fout;
+	int* devResults;
+	fout = fopen("C:\\Users\\nmsbu\\source\\repos\\CudaHardHw1\\numbers.txt", "w");
+	cudaMalloc((void**)&devResults, 10000 * 10000 * sizeof(int));
+	cudaMemset(devResults, 0, 10000 * 10000 * sizeof(int));
+	compare_kernel <<<10000 * 10000, 1 >>> (devResults);
+
+
+	fprintf(fout, "%d", devResults);
+
+	fclose(fout);
+	cudaFree(devResults);
+	return EXIT_SUCCESS;
+
+}
