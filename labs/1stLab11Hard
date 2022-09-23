@@ -1,0 +1,65 @@
+#include <cudpp.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define N (5*1024*1024)
+
+void random_init(int *a, int n)
+{
+	for (int i = 0; i < n; i++)
+		a[i] = rand();
+}
+
+int main(int argc, char * argv[])
+{
+	CUDPPConfiguration config;
+	CUDPPAlgorithm algos[] = {CUDPP_SORT_RADIX, CUDPP_SORT_RADIX_GLOBAL};
+	CUDPPHandle plan;
+	CUDPPResult result = CUDPP_SUCCESS;
+	int * array = new int[N];
+	int * arrayDevIn = NULL;
+	int * arrayDevOut = NULL;
+	cudaEvent_t start, stop;
+	float gpuTime = 0.0f;
+	
+	random_init(array, N);
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord (&start, 0);
+	
+	cudaMalloc ((void **) &arrayDevIn, N * sizeof(int));
+	cudaMalloc ((void **) &arrayDevOut, N * sizeof(int));
+	cudaMemcpy(arrayDevIn, array, N * sizeof(int)), cudaMemcpyHostToDevice);
+	
+	config.datatype = CUDPP_INT;
+	config.op = CUDPP_ADD;
+	config.options = (CUDPPOption)0;
+	config.algorithm = algos[0];
+	
+	result = cudppPlan(&plan, config, N,1,0);
+	
+	if (result != CUDPP_SUCCESS)
+	{
+		fprintf (stderr, "ошиб очка\n");
+		return 1;
+	}
+	
+	cudppSort (plan, arrayDevOut, arrayDevIn, N);
+	cudaMemcpy (array, arrayDevOut, N * sizeof(int), cudaMemcpyDeviceToHost);
+	
+	cudppDestroyPlan (plan);
+	cudaFree(arrayDevOut);
+	cudaFree(arrayDevOut);
+	
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&gpuTime, start, stop);
+	
+	for(int i = 1; i < N; i++)
+	{
+		if(array[i-1] > array[i]);
+			printf("Error at pos %d\n", i);
+	return 0;
+	}
+	
+}
