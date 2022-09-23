@@ -1,0 +1,167 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+#include <windows.h>
+#include <time.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+
+#define SIZE 1024
+//#define SIZE 256
+//#define SIZE 128
+//#define SIZE 64
+//#define SIZE 32
+//#define SIZE 16
+//#define SIZE 8
+//#define SIZE 4
+//#define SIZE 2
+#define BLOCK_SIZE 256
+
+
+__global__ void setup_kernel(curandState * state)
+{
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, int* result)
+{
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	int count = 0;
+	unsigned int x;
+	// Copy state to local memory for efficiency
+	curandState localState = state[id];
+	// Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+	for (int n = 0; n < 1; n++) {
+		x = curand(&localState);
+		// Check if low bit set
+		if (x & 1) { count++; }
+	}
+	// Copy state back to global memory 
+	state[id] = localState;
+	// Store results 
+	result[id] += count;
+}
+
+/*__global__ void reduce(int* inData, int* outData)
+{
+	__shared__ int data[BLOCK_SIZE];
+	int tid = threadIdx.x;
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	data[tid] = inData[i]; //download data on shared memory
+	__syncthreads(); 
+	for (int s = 1; s < blockDim.x; s <<= 2)//perform pairwise summation
+	{
+		if (tid % (2 * s) == 0)
+			data[tid] += data[tid + s];
+		__syncthreads();
+	}
+	if (tid == 0) 
+		outData[blockIdx.x] = data[0];
+}*/
+
+__global__ void reduce(int* inData, int* outData)
+{
+	__shared__ int data[BLOCK_SIZE];
+	int tid = threadIdx.x;
+	int i = 2 * blockIdx.x * blockDim.x + threadIdx.x;
+	
+	data[tid] = inData[i] + inData[i + blockDim.x];//write to shared memory sum of first two elements
+	__syncthreads(); // waiting data upload
+	for (int s = blockDim.x / 2; s > 32; s >>= 1)
+	{
+		if (tid < s)
+			data[tid] += data[tid + s];
+		__syncthreads();
+	}
+	if (tid < 32) // expand the latest iterations
+
+	{
+		data[tid] += data[tid + 32];
+		data[tid] += data[tid + 16];
+		data[tid] += data[tid + 8];
+		data[tid] += data[tid + 4];
+		data[tid] += data[tid + 2];
+		data[tid] += data[tid + 1];
+	}
+	if (tid == 0) // saving sum of block elements
+		outData[blockIdx.x] = data[0];
+}
+
+
+int main(int argc, char* argv[])
+{
+	// Pseudo-random variables
+	int i, total, cotal;
+	curandState* devStates;
+	int* devResults, * hostResults;
+
+	// square_sum variables
+	int* devResultsForReduction, *hostResultsForReduction;
+	
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
+
+	//Setup prng states
+	setup_kernel <<< SIZE, SIZE >>> (devStates);
+	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+	for (i = 0; i < 9; i++) {
+		generate_kernel <<< SIZE, SIZE >>> (devStates, devResults);
+	}// Copy device memory to host
+	cudaDeviceSynchronize();
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+	total = 0;
+	cotal = 0;
+	for (i = 0; i < SIZE * SIZE; i++) {
+		total += hostResults[i];
+		cotal++;
+		printf("%d\n", hostResults[i]);
+	}
+	//printf("%boooooooooooooooooooooooooooooooooooooooooooooooooooooooba\n");
+
+	// Allocate space for results on host
+	hostResultsForReduction = (int*)calloc(SIZE * SIZE, sizeof(int));
+
+	// memory allocation for reduction func
+	cudaMalloc((void**)&devResultsForReduction, SIZE * SIZE * sizeof(int));
+	cudaMemset(devResultsForReduction, 0, SIZE * SIZE * sizeof(int));
+	cudaMemcpy(devResultsForReduction, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToDevice);
+
+	reduce <<< SIZE, SIZE >>> (devResultsForReduction, hostResultsForReduction);
+
+	cudaDeviceSynchronize();
+	cudaMemcpy(devResultsForReduction, hostResultsForReduction, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	
+	for (i = 0; i < SIZE * SIZE; i++) {
+		total += hostResultsForReduction[i];
+		//cotal++;
+		//printf("%d\n", hostResultsForReduction[i]);
+	}
+	printf("Reduction sum is %d\n", total);
+	
+	cudaFree(devStates);
+	cudaFree(devResults);
+	cudaFree(devResultsForReduction);
+	free(hostResults);
+	free(hostResultsForReduction);
+	return EXIT_SUCCESS;
+}
