@@ -1,4 +1,4 @@
-#define BLOCK_SIZE 16 // ê‡ÁÏÂ ·ÎÓÍ‡.
+#define BLOCK_SIZE 16
 __global__ void matMult ( float * a, float * b, int n, float * c )
 {
 	int bx = blockIdx.x;
