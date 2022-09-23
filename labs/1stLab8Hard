@@ -1,0 +1,46 @@
+#define BLOCK_SIZE 512
+__device__ void Comparator ( uint& keyA, uint& valA, uint& keyB, uint& valB, uint dir )
+{
+	uint t;
+	if ( (keyA > keyB) == dir )
+	{
+		t = keyA; keyA = keyB; keyB = t;
+		t = valA; valA = valB; valB = t;
+	}
+}
+
+
+__global__ void bitonicSortShared ( uint * dstKey, uint * dstVal, uint * srcKey,
+{
+	__shared__ uint sk [BLOCK_SIZE * 2];
+	__shared__ uint sv [BLOCK_SIZE * 2];
+	int index = blockId.x * BLOCK_SIZE * 2 + threadId.x.x;
+	
+	sk [threadIdx.x + BLOCK_SIZE] = srcKey [index];
+	sv [threadIdx.x + BLOCK_SIZE] = srcVal [index];
+	sk [threadIdx.x + BLOCK_SIZE] = srcKey [index + BLOCK_SIZE];
+	sv [threadIdx.x + BLOCK_SIZE] = srcVal [index + BLOCK_SIZE];
+	for ( uint size = 2; size < arrayLength; size <<= 1 )
+	{
+		uint ddd = dir ^ ( (threadIdx.x & (size / 2)) != 0 );
+		for ( uint stride = size >> 1; stride > 0; stride >>= 1)
+		{
+			__syncthreads ();
+			uint pos = 2 * threadIdx.x – (threadIdx.x & (stride – 1));
+			Comparator( sk [pos], sv [pos], sk [pos+stride], sv [pos+stride], ddd );
+		}
+	}
+	
+	for ( uint stride = arrayLength >> 1; stride > 0; stride >>= 1 )
+	{
+		__syncthreads ();
+		uint pos = 2 * threadIdx.x – (threadIdx.x & (stride – 1));
+		Comparator ( sk [pos], sv [pos], sk [pos + stride], sv [pos + stride], dir );
+	}
+	
+	__syncthreads ();
+	dstKey [index] = sk [threadIdx.x];
+	dstVal [index] = sv [threadIdx.x];
+	dstKey [index + BLOCK_SIZE] = sk [threadIdx.x + BLOCK_SIZE];
+	dstVal [index + BLOCK_SIZE] = sv [threadIdx.x + BLOCK_SIZE];
+}
