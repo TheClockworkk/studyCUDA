@@ -1,0 +1,115 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+#include <windows.h>
+#include <time.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+//#define N 1024
+//#define N 256
+//#define N 128
+//#define N 64
+//#define N 32
+//#define N 16
+//#define N 8
+#define N 4
+//#define N 2
+
+__global__ void transpose(float* inData, int n, float* outData)
+{
+	unsigned int xIndex = blockDim.x * blockIdx.x + threadIdx.x;
+	unsigned int yIndex = blockDim.y * blockIdx.y + threadIdx.y;
+
+	unsigned int inIndex = xIndex + n * yIndex;
+	unsigned int outIndex = yIndex + n * xIndex;
+
+	outData[outIndex] = inData[inIndex];
+}
+
+
+int main(int argc, char* argv[])
+{
+	int matrixSize = N * N * sizeof(float);
+	int count = 0;
+
+	// allocate host memory
+
+	float* matrix = new float[N * N];
+	float* matrixRes = new float[N * N];
+
+	int n = 0;
+	for (int i = 0; i < N * N; i++)
+	{
+		matrix[i] = n * 1.0f;
+		n++;
+	}
+
+	// allocate device memory
+
+	float* devMatrix, * devMatrixRes;
+
+	cudaMalloc((void**)&devMatrix, matrixSize);
+	cudaMemset(devMatrix, 0, matrixSize * sizeof(float));
+
+
+	cudaMalloc((void**)&devMatrixRes, matrixSize);
+	cudaMemset(devMatrixRes, 0, matrixSize * sizeof(float));
+
+	// kernel launch settings
+
+	dim3 threads(N, N);
+	dim3 blocks(N / threads.x, N / threads.y);
+
+	// host data -> device data
+
+	cudaMemcpy(devMatrix, matrix, matrixSize, cudaMemcpyHostToDevice);
+
+	transpose <<< blocks, threads >>> (devMatrix, N, devMatrixRes);
+
+	printf("Matrix A:\n");
+	for (int i = 0; i < N * N; i++)
+	{
+		if (count != N) {
+			printf("%f ", matrix[i]);
+			count++;
+		}
+		else {
+			printf("\n%f ", matrix[i]);
+			count = 1;
+		}
+
+	}
+	count = 0;
+
+	cudaMemcpy(matrixRes, devMatrixRes, matrixSize, cudaMemcpyDeviceToHost);
+	printf("\n\nMatrix transporation result:\n");
+	for (int i = 0; i < N*N; i++)
+	{
+		if (count != N) {
+			printf("%f ", matrixRes[i]);
+			count++;
+		}
+		else {
+			printf("\n%f ", matrixRes[i]);
+			count = 1;
+		}
+		
+	}
+	count = 0;
+
+	cudaFree(devMatrix);
+	cudaFree(devMatrixRes);
+	free(matrix);
+	free(matrixRes);
+
+	return EXIT_SUCCESS;
+}
