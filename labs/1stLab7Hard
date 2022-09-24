@@ -15,7 +15,7 @@
 #include "device_launch_parameters.h"
 
 
-//define SIZE 1024
+//#define SIZE 1024
 //#define SIZE 256
 //#define SIZE 128
 //#define SIZE 64
@@ -56,16 +56,22 @@ __global__ void generate_kernel(curandState* state, int* result)
 
 __global__ void histogramm(int* inData, int* outData)
 {
+	__shared__ int temp[SIZE * SIZE];
+	temp[threadIdx.x] = 0;
+	__syncthreads();
+
 	int id = threadIdx.x + blockIdx.x * blockDim.x;
-	int stride = blockDim.x * gridDim.x;
+	int offset = blockDim.x * gridDim.x;
+
 	while (id < SIZE * SIZE)
 	{
-		atomicAdd (&(outData[inData[id]]), 1);
-		id += stride;
+		atomicAdd (&temp[inData[id]], 1);
+		id += offset;
 	}
+
+	__syncthreads();
+	atomicAdd(&(outData[threadIdx.x]), temp[threadIdx.x]);
 }
-
-
 
 
 int main(int argc, char* argv[])
@@ -119,32 +125,27 @@ int main(int argc, char* argv[])
 
 	//place for histogramm calculation
 
-	cudaDeviceProp prop;
-
-	cudaGetDeviceProperties(&prop, 0);
-	int blocks = prop.multiProcessorCount;
-
-	histogramm <<<blocks*2, SIZE*SIZE >>> (dev_buffer, dev_histo);
+	histogramm <<<SIZE * SIZE, SIZE*SIZE >>> (dev_buffer, dev_histo);
 
 	int histo[SIZE * SIZE];
 	cudaMemcpy(histo, dev_histo, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 	
-	long histoCount = 0;
-	for (int i = 0; i < SIZE * SIZE; i++) 
-	{
-		histoCount += histo[i];
-		//printf("Histogramm part: %ld\n", histo[i]);
-	}
-
-	printf("Histogramm sum: %ld\n", histoCount);
-
 	for (int i = 0; i < SIZE * SIZE; i++)
+	{
 		histo[hostResults[i]]--;
+	}
+
+	int histoCount = 0;
 	for (int i = 0; i < SIZE * SIZE; i++) 
 	{
-		if (histo[i] != 0)
-			printf("Error v stolbike %d!\n", i);
+		if (histo[i] != 0 && (abs(histo[i]) < SIZE * SIZE))
+		{
+			printf("Exist column with digit %d, count of elements - %d \n", i, abs(histo[i]));
+			histoCount += abs(histo[i]);
+		}
 	}
+
+	printf("Histogramm count of elements: %ld\n", histoCount);
 
 	cudaFree(devStates);
 	cudaFree(devResults);
