@@ -1,46 +1,151 @@
-#define BLOCK_SIZE 512
-__device__ void Comparator ( uint& keyA, uint& valA, uint& keyB, uint& valB, uint dir )
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+
+//#define SIZE 1024
+//#define SIZE 256
+//#define SIZE 128
+//#define SIZE 64
+//#define SIZE 32
+//#define SIZE 16
+#define SIZE 8
+//#define SIZE 4
+//#define SIZE 2
+
+__global__ void setup_kernel(curandState* state)
 {
-	uint t;
-	if ( (keyA > keyB) == dir )
-	{
-		t = keyA; keyA = keyB; keyB = t;
-		t = valA; valA = valB; valB = t;
-	}
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
 }
 
-
-__global__ void bitonicSortShared ( uint * dstKey, uint * dstVal, uint * srcKey,
+__global__ void generate_kernel(curandState* state, int* result)
 {
-	__shared__ uint sk [BLOCK_SIZE * 2];
-	__shared__ uint sv [BLOCK_SIZE * 2];
-	int index = blockId.x * BLOCK_SIZE * 2 + threadId.x.x;
-	
-	sk [threadIdx.x + BLOCK_SIZE] = srcKey [index];
-	sv [threadIdx.x + BLOCK_SIZE] = srcVal [index];
-	sk [threadIdx.x + BLOCK_SIZE] = srcKey [index + BLOCK_SIZE];
-	sv [threadIdx.x + BLOCK_SIZE] = srcVal [index + BLOCK_SIZE];
-	for ( uint size = 2; size < arrayLength; size <<= 1 )
-	{
-		uint ddd = dir ^ ( (threadIdx.x & (size / 2)) != 0 );
-		for ( uint stride = size >> 1; stride > 0; stride >>= 1)
-		{
-			__syncthreads ();
-			uint pos = 2 * threadIdx.x – (threadIdx.x & (stride – 1));
-			Comparator( sk [pos], sv [pos], sk [pos+stride], sv [pos+stride], ddd );
-		}
+	int id = threadIdx.x + blockIdx.x * SIZE;
+	int count = 0;
+	unsigned int x;
+	// Copy state to local memory for efficiency
+	curandState localState = state[id];
+	// Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+	for (int n = 0; n < 1; n++) {
+		x = curand(&localState);
+		// Check if low bit set
+		if (x & 1) { count++; }
 	}
-	
-	for ( uint stride = arrayLength >> 1; stride > 0; stride >>= 1 )
-	{
-		__syncthreads ();
-		uint pos = 2 * threadIdx.x – (threadIdx.x & (stride – 1));
-		Comparator ( sk [pos], sv [pos], sk [pos + stride], sv [pos + stride], dir );
+	// Copy state back to global memory 
+	state[id] = localState;
+	// Store results 
+	result[id] += count;
+}
+
+__global__ void bitonic_sort_step(int* dev_values, int j, int k)
+{
+	// Sorting partners: i and i_XOR_j 
+    unsigned int i, i_XOR_j; 
+    i = threadIdx.x + blockDim.x * blockIdx.x;
+	//XOR operation
+	i_XOR_j = i ^ j;
+
+    // The threads with the lowest ids sort the array.
+    if ((i_XOR_j) > i) {
+        if ((i & k) == 0) {
+            // Sort ascending 
+            if (dev_values[i] > dev_values[i_XOR_j]) {
+                // exchange(i,i_XOR_j); 
+                int temp = dev_values[i];
+                dev_values[i] = dev_values[i_XOR_j];
+                dev_values[i_XOR_j] = temp;
+            }
+        }
+        if ((i & k) != 0) {
+            // Sort descending 
+            if (dev_values[i] < dev_values[i_XOR_j]) {
+                // exchange(i,ixj); 
+                int temp = dev_values[i];
+                dev_values[i] = dev_values[i_XOR_j];
+                dev_values[i_XOR_j] = temp;
+            }
+        }
+    }
+}
+
+void bitonic_sort(int* values)
+{
+    int j, k;
+    // Major step 
+    for (k = 2; k <= SIZE * SIZE; k <<= 1) {
+        // Minor step 
+        for (j = k >> 1; j > 0; j = j >> 1) {
+            bitonic_sort_step <<< SIZE, SIZE >>> (values, j, k);
+        }
+    }
+}
+
+int main(void)
+{ 
+	// Pseudo-random variables
+	int i, total, cotal;
+	curandState* devStates;
+	int* devResults, *hostResults;
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
+
+	//Setup prng states
+	setup_kernel <<< SIZE, SIZE >>> (devStates);
+	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+	for (i = 0; i < 9; i++) {
+		generate_kernel <<< SIZE, SIZE >>> (devStates, devResults);
+	} // Copy device memory to host
+	cudaDeviceSynchronize();
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+
+	printf("input:\n");
+	total = 0;
+	cotal = 0;
+	for (i = 0; i < SIZE * SIZE; i++) {
+		total += hostResults[i];
+		cotal++;
+		printf("%d ",hostResults[i]);
 	}
-	
-	__syncthreads ();
-	dstKey [index] = sk [threadIdx.x];
-	dstVal [index] = sv [threadIdx.x];
-	dstKey [index + BLOCK_SIZE] = sk [threadIdx.x + BLOCK_SIZE];
-	dstVal [index + BLOCK_SIZE] = sv [threadIdx.x + BLOCK_SIZE];
+
+	printf("\n");
+
+	// bitonic sort memory moves
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	cudaMemcpy(devResults, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToDevice);
+
+	bitonic_sort(devResults);
+
+	cudaMemset(hostResults, 0, SIZE * SIZE * sizeof(int));
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+
+	printf("output:\n");
+	for (int i = 0; i < SIZE * SIZE; ++i) {
+		printf("%d ", hostResults[i]);
+	}
+	printf("\n");
+
+	cudaFree(devStates);
+	cudaFree(devResults);
+	free(hostResults);
 }
