@@ -13,13 +13,13 @@
 #include "device_launch_parameters.h"
 
 
-//#define SIZE 1024
+#define SIZE 1024
 //#define SIZE 256
 //#define SIZE 128
 //#define SIZE 64
 //#define SIZE 32
 //#define SIZE 16
-#define SIZE 8
+//#define SIZE 8
 //#define SIZE 4
 //#define SIZE 2
 
@@ -72,7 +72,7 @@ __global__ void bitonic_sort_step(int* dev_values, int j, int k)
         if ((i & k) != 0) {
             // Sort descending 
             if (dev_values[i] < dev_values[i_XOR_j]) {
-                // exchange(i,ixj); 
+                // exchange(i,i_XOR_j); 
                 int temp = dev_values[i];
                 dev_values[i] = dev_values[i_XOR_j];
                 dev_values[i_XOR_j] = temp;
@@ -86,12 +86,16 @@ void bitonic_sort(int* values)
     int j, k;
     // Major step 
     for (k = 2; k <= SIZE * SIZE; k <<= 1) {
+		//printf(" Main step, k= %d \n ", k);
+
         // Minor step 
         for (j = k >> 1; j > 0; j = j >> 1) {
-            bitonic_sort_step <<< SIZE, SIZE >>> (values, j, k);
+			//printf(" Minor step, j= %d \n ", j);
+            bitonic_sort_step <<< SIZE * SIZE, SIZE* SIZE >>> (values, j, k);
         }
     }
 }
+
 
 int main(void)
 { 
@@ -134,16 +138,21 @@ int main(void)
 	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
 	cudaMemcpy(devResults, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToDevice);
 
+
 	bitonic_sort(devResults);
+	
 
 	cudaMemset(hostResults, 0, SIZE * SIZE * sizeof(int));
 	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
-
+	
 	printf("output:\n");
 	for (int i = 0; i < SIZE * SIZE; ++i) {
 		printf("%d ", hostResults[i]);
 	}
 	printf("\n");
+
+
+	
 
 	cudaFree(devStates);
 	cudaFree(devResults);
