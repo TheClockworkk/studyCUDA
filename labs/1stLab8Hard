@@ -53,56 +53,103 @@ __global__ void generate_kernel(curandState* state, int* result)
 __global__ void bitonic_sort_step(int* dev_values, int j, int k)
 {
 	// Sorting partners: i and i_XOR_j 
-    unsigned int i, i_XOR_j; 
-    i = threadIdx.x + blockDim.x * blockIdx.x;
+	unsigned int i, i_XOR_j;
+	i = threadIdx.x + blockDim.x * blockIdx.x;
 	//XOR operation
 	i_XOR_j = i ^ j;
 
-    // The threads with the lowest ids sort the array.
-    if ((i_XOR_j) > i) {
-        if ((i & k) == 0) {
-            // Sort ascending 
-            if (dev_values[i] > dev_values[i_XOR_j]) {
-                // exchange(i,i_XOR_j); 
-                int temp = dev_values[i];
-                dev_values[i] = dev_values[i_XOR_j];
-                dev_values[i_XOR_j] = temp;
-            }
-        }
-        if ((i & k) != 0) {
-            // Sort descending 
-            if (dev_values[i] < dev_values[i_XOR_j]) {
-                // exchange(i,i_XOR_j); 
-                int temp = dev_values[i];
-                dev_values[i] = dev_values[i_XOR_j];
-                dev_values[i_XOR_j] = temp;
-            }
-        }
-    }
+	// The threads with the lowest ids sort the array.
+	if ((i_XOR_j) > i) {
+		if ((i & k) == 0) {
+			// Sort ascending 
+			if (dev_values[i] > dev_values[i_XOR_j]) {
+				// exchange(i,i_XOR_j); 
+				int temp = dev_values[i];
+				dev_values[i] = dev_values[i_XOR_j];
+				dev_values[i_XOR_j] = temp;
+			}
+		}
+		if ((i & k) != 0) {
+			// Sort descending 
+			if (dev_values[i] < dev_values[i_XOR_j]) {
+				// exchange(i,i_XOR_j); 
+				int temp = dev_values[i];
+				dev_values[i] = dev_values[i_XOR_j];
+				dev_values[i_XOR_j] = temp;
+			}
+		}
+	}
 }
 
 void bitonic_sort(int* values)
 {
-    int j, k;
-    // Major step 
-    for (k = 2; k <= SIZE * SIZE; k <<= 1) {
+	int j, k;
+	// Major step 
+	for (k = 2; k <= SIZE * SIZE; k <<= 1) {
 		//printf(" Main step, k= %d \n ", k);
 
-        // Minor step 
-        for (j = k >> 1; j > 0; j = j >> 1) {
+		// Minor step 
+		for (j = k >> 1; j > 0; j = j >> 1) {
 			//printf(" Minor step, j= %d \n ", j);
-            bitonic_sort_step <<< SIZE * SIZE, SIZE* SIZE >>> (values, j, k);
-        }
-    }
+			bitonic_sort_step << < SIZE, SIZE>> > (values, j, k);
+		}
+	}
 }
 
 
+void compAndSwap(int* a, int i, int j, int dir)
+{
+	if (dir == (a[i] > a[j]))
+	{
+		int temp = 0;
+		temp = a[i];
+		a[i] = a[j];
+		a[j] = temp;
+	}
+}
+
+void bitonicMerge(int* a, int low, int cnt, int dir)
+{
+	if (cnt > 1)
+	{
+		int k = cnt / 2;
+		for (int i = low; i < low + k; i++)
+			compAndSwap(a, i, i + k, dir);
+		bitonicMerge(a, low, k, dir);
+		bitonicMerge(a, low + k, k, dir);
+	}
+}
+
+void bitonicSort(int* a, int low, int cnt, int dir)
+{
+	if (cnt > 1)
+	{
+		int k = cnt / 2;
+
+		// sort in ascending order since dir here is 1
+		bitonicSort(a, low, k, 1);
+
+		// sort in descending order since dir here is 0
+		bitonicSort(a, low + k, k, 0);
+
+		// Will merge whole sequence in ascending order
+		// since dir=1.
+		bitonicMerge(a, low, cnt, dir);
+	}
+}
+
+
+void sort(int* a, int N, int up)
+{
+	bitonicSort(a, 0, N, up);
+}
+
 int main(void)
-{ 
+{
 	// Pseudo-random variables
 	int i, total, cotal;
 	curandState* devStates;
-	int* devResults, *hostResults;
+	int* devResults, * hostResults;
 
 	// Allocate space for results on host
 	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
@@ -114,45 +161,72 @@ int main(void)
 	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
 
 	//Setup prng states
-	setup_kernel <<< SIZE, SIZE >>> (devStates);
+	setup_kernel << < SIZE, SIZE >> > (devStates);
 	// Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
 	for (i = 0; i < 9; i++) {
-		generate_kernel <<< SIZE, SIZE >>> (devStates, devResults);
+		generate_kernel << < SIZE, SIZE >> > (devStates, devResults);
 	} // Copy device memory to host
 	cudaDeviceSynchronize();
 	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 	// Show result - always fixed, based on seed from setup_kernel
 
 	printf("input:\n");
+	//CPU
+	clock_t start, end;
+	float cpu_time_used;
+	start = clock();
+
 	total = 0;
 	cotal = 0;
 	for (i = 0; i < SIZE * SIZE; i++) {
 		total += hostResults[i];
 		cotal++;
-		printf("%d ",hostResults[i]);
+		//printf("%d ", hostResults[i]);
 	}
 
-	printf("\n");
 
-	// bitonic sort memory moves
+	int* cpuInput;
+	cpuInput = (int*)calloc(SIZE * SIZE, sizeof(int));
+	cudaMemcpy(cpuInput, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToHost);
+	//Bitonic sort CPU
+	int up = 1;   // means sort in ascending order
+	sort(cpuInput, cotal, up);
+
+	//printf("\n\nCPU output: \n");
+	for (int i = 0; i < cotal; i++)
+		//printf("%d ", cpuInput[i]);
+
+	end = clock();
+	cpu_time_used = ((float)(end - start)) / CLOCKS_PER_SEC;
+
+	// bitonic sort GPU
 	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
 	cudaMemcpy(devResults, hostResults, SIZE * SIZE * sizeof(int), cudaMemcpyHostToDevice);
 
-
+	cudaEvent_t startC, stopC;
+	float timeC;
+	cudaEventCreate(&startC);
+	cudaEventCreate(&stopC);
+	cudaEventRecord(startC, 0);
 	bitonic_sort(devResults);
-	
+	cudaDeviceSynchronize();
+	cudaEventRecord(stopC, 0);
+	cudaEventSynchronize(stopC);
+	cudaEventElapsedTime(&timeC, startC, stopC);
+	cudaEventDestroy(stopC);
+	cudaEventDestroy(startC);
 
 	cudaMemset(hostResults, 0, SIZE * SIZE * sizeof(int));
 	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
-	
-	printf("output:\n");
+
+	//printf("\n\nGPU output:\n");
 	for (int i = 0; i < SIZE * SIZE; ++i) {
-		printf("%d ", hostResults[i]);
+		//printf("%d ", hostResults[i]);
 	}
 	printf("\n");
 
-
-	
+	printf("\nCPU time %f ms\n", cpu_time_used * float(1000));
+	printf("\nGPU time = %f ms\n", timeC);
 
 	cudaFree(devStates);
 	cudaFree(devResults);
