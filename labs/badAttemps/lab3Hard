@@ -1,0 +1,149 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+#include <windows.h>
+#include <time.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+//#define N 1024
+//#define N 256
+//#define N 128
+//#define N 64
+//#define N 32
+//#define N 16
+#define N 8
+//#define N 4
+//#define N 2
+
+#define BLOCKSIZE 8
+
+__global__ void nodiag_normalize(double* A, double* I, int n, int i) {
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (x < n && y < n)
+		if (x == i && x != y) {
+			I[x * n + y] /= A[i * n + i];
+			A[x * n + y] /= A[i * n + i];
+		}
+
+}
+
+__global__ void diag_normalize(double* A, double* I, int n, int i) {
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (x < n && y < n)
+		if (x == y && x == i) {
+			I[x * n + y] /= A[i * n + i];
+			A[x * n + y] /= A[i * n + i];
+		}
+
+}
+
+__global__ void gaussjordan(double* A, double* I, int n, int i)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (x < n && y < n) {
+		if (x != i) {
+			I[x * n + y] -= I[i * n + y] * A[x * n + i];
+			if (y != i) {
+				A[x * n + y] -= A[i * n + y] * A[x * n + i];
+			}
+		}
+	}
+
+}
+
+__global__ void set_zero(double* A, double* I, int n, int i) {
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (x < n && y < n) {
+		if (x != i) {
+			if (y == i) {
+				A[x * n + y] = 0;
+			}
+		}
+	}
+}
+
+
+
+int main(int argc, char* argv[])
+{
+	// creating input
+	double* iL = new double[N * N];
+	double* L = new double[N * N];
+
+	int n = 0;
+	for (int i = 0; i < N * N; i++)
+	{
+		matrix[i] = n * 1.0f;
+		n++;
+	}
+	double* d_A, * d_L, * I, * dI;
+
+	int ddsize = N * N * sizeof(double);
+
+	dim3 threads(BLOCKSIZE, BLOCKSIZE);
+	dim3 blocks((N + BLOCKSIZE - 1) / BLOCKSIZE, (N + BLOCKSIZE - 1) / BLOCKSIZE);
+	// memory allocation    
+	cudaMalloc((void**)&d_A, ddsize);
+	cudaMalloc((void**)&dI, ddsize);
+	I = new double[N * N];
+
+	for (int i = 0; i < N; i++) {
+		for (int j = 0; j < N; j++) {
+			if (i == j) I[i * N + i] = 1.0;
+			else I[i * N + j] = 0.0;
+		}
+	}
+
+	//copy data from CPU to GPU
+	cudaMemcpy(d_A, L, ddsize, cudaMemcpyHostToDevice);
+	cudaMemcpy(dI, I, ddsize, cudaMemcpyHostToDevice);
+
+	// L^(-1)    
+	for (int i = 0; i < N; i++) {
+		nodiag_normalize <<< blocks, threads >>> (d_A, dI, N, i);
+		diag_normalize <<< blocks, threads >>> (d_A, dI, N, i);
+		gaussjordan <<< blocks, threads >>> (d_A, dI, N, i);
+		set_zero <<< blocks, threads >>> (d_A, dI, N, i);
+	}
+
+	//copy data from GPU to CPU
+	cudaMemcpy(iL, dI, ddsize, cudaMemcpyDeviceToHost);
+	cudaMemcpy(I, d_A, ddsize, cudaMemcpyDeviceToHost);
+
+
+
+	cudaFree(d_A);
+	cudaFree(dI);
+
+	double* c = new double[N * N];
+	for (int i = 0; i < N; i++)
+		for (int j = 0; j < N; j++)
+		{
+			c[i * N + j] = 0;  //put the initial value to zero
+			for (int x = 0; x < N; x++)
+				c[i * N + j] = c[i * N + j] + L[i * N + x] * iL[x * N + j];  //matrix multiplication
+		}
+
+	delete[]I;
+	delete[]L;
+	delete[]iL;
+
+	return EXIT_SUCCESS;
+}
