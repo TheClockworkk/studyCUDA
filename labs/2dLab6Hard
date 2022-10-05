@@ -1,0 +1,120 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+#include <time.h>
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#define SIZE 1024
+//#define SIZE 256
+//#define SIZE 128
+//#define SIZE 64
+//#define SIZE 32
+//#define SIZE 16
+//#define SIZE 8
+//#define SIZE 4
+//#define SIZE 2
+
+__global__ void setup_kernel(curandState* state)
+{
+	int id = threadIdx.x + blockIdx.x * blockDim.x;
+	// Each thread gets same seed, a different sequence
+	// Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+	curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, int* result)
+{
+	int id = threadIdx.x + blockIdx.x * blockDim.x;
+    unsigned int count = 0;
+    float x;
+    /* Copy state to local memory for efficiency */
+    curandState localState = state[id];
+    /* Generate pseudo-random uniforms */
+    for(int i = 0; i < 1; i++) {
+        x = curand_uniform(&localState);
+        /* Check if > .5 */
+        if(x > .5) {
+            count++;
+        }
+    }
+    /* Copy state back to global memory */
+    state[id] = localState;
+    /* Store results */
+    result[id] += count;
+}
+
+int main(int argc, char* argv[])
+{
+	// Pseudo-random variables
+	int i;
+	curandState* devStates;
+	int* devResults, * hostResults;
+
+	// Allocate space for results on host
+	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
+	// Allocate space for results on device
+	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(int));
+	// Set results to 0
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	// Allocate space for prng states on device
+	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
+
+	cudaEvent_t startG, stopG;
+	float timeG;
+	cudaEventCreate(&startG);
+	cudaEventCreate(&stopG);
+	cudaEventRecord(startG, 0);
+	//Setup prng states
+	setup_kernel <<< SIZE, SIZE >>> (devStates);
+	// Generate and use pseudo-random
+	for (i = 0; i < 9; i++) {
+		generate_kernel <<< SIZE, SIZE >>> (devStates, devResults);
+	}// Copy device memory to host
+	cudaDeviceSynchronize();
+	cudaEventRecord(stopG, 0);
+	cudaEventSynchronize(stopG);
+	cudaEventElapsedTime(&timeG, startG, stopG);
+	printf("Generation time GPU = %f ms\n", timeG);
+	cudaEventDestroy(stopG);
+	cudaEventDestroy(startG);
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	// Show result - always fixed, based on seed from setup_kernel
+
+	//printf("Generated array:\n");
+	int total = 0;
+	for (i = 0; i < SIZE * SIZE; i++) {
+		total += hostResults[i];
+		//printf("%d ", hostResults[i]);
+	}
+
+	//CPU
+	clock_t start, end;
+	float cpu_time_used;
+	start = clock();
+	int lower = 0, upper = 9;
+	// seed for random generator
+	srand(time(0));
+	int* cpuRandom;
+	cpuRandom = (int*)calloc(SIZE * SIZE, sizeof(int));
+	for (i = 0; i < SIZE * SIZE; i++) {
+		cpuRandom[i] = (rand() % (upper - lower + 1)) + lower;
+	}
+
+	//for (i = 0; i < SIZE * SIZE; i++)
+		//printf("%d ", hostResults[i]);
+	end = clock();
+	cpu_time_used = ((float)(end - start)) / CLOCKS_PER_SEC;
+	printf("Generation time CPU = %f ms\n", cpu_time_used * float(1000));
+
+	return EXIT_SUCCESS;
+
+}
