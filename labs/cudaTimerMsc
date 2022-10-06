@@ -10,3 +10,32 @@ cudaEventElapsedTime(&time, start, stop);
 printf(" time = %f\n", time);
 cudaEventDestroy(stop);
 cudaEventDestroy(start);
+
+
+//CPU
+	clock_t start, end;
+	float cpu_time_used;
+	start = clock();
+
+	int lower = 0, upper = 9;
+	// seed for random generator
+	srand(time(0));
+	int* cpuRandom;
+	cpuRandom = (int*)calloc(SIZE * SIZE, sizeof(int));
+	for (int i = 0; i < SIZE * SIZE; i++) {
+		cpuRandom[i] = (rand() % (upper - lower + 1)) + lower;
+	}
+
+	end = clock();
+	cpu_time_used = ((float)(end - start)) / CLOCKS_PER_SEC;
+
+	total = 0;
+	count = 0;
+	for (int i = 0; i < SIZE * SIZE; i++)
+	{
+		total += cpuRandom[i];
+		printf("%d ", cpuRandom[i]);
+		count++;
+	}
+	printf("\nElements count CPU %d\n", count);
+	printf("\nGeneration time CPU = %f ms\n", cpu_time_used * 1000);
