@@ -57,14 +57,14 @@ int main(int argc, char* argv[])
 	// Pseudo-random variables
 	int i;
 	curandState* devStates;
-	int* devResults, * hostResults;
+	unsigned int* devResults, * hostResults;
 
 	// Allocate space for results on host
-	hostResults = (int*)calloc(SIZE * SIZE, sizeof(int));
+	hostResults = (unsigned int*)calloc(SIZE * SIZE, sizeof(int));
 	// Allocate space for results on device
-	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(int));
+	cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(unsigned int));
 	// Set results to 0
-	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(int));
+	cudaMemset(devResults, 0, SIZE * SIZE * sizeof(unsigned int));
 	// Allocate space for prng states on device
 	cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
 
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
 	printf("Generation time GPU = %f ms\n", timeG);
 	cudaEventDestroy(stopG);
 	cudaEventDestroy(startG);
-	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(unsigned int), cudaMemcpyDeviceToHost);
 	// Show result - always fixed, based on seed from setup_kernel
 
 	//printf("Generated array:\n");
