@@ -9,7 +9,7 @@
 #include <curand.h>
 #include <device_functions.h>
 
-#define SIZE 256
+#define SIZE 1024
 
 __global__ void setup_kernel(curandStateMRG32k3a* state)
 {
