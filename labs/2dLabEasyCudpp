@@ -1,0 +1,70 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <cuda.h>
+#include <curand_kernel.h>
+#include <curand.h>
+#include <device_functions.h>
+#include <time.h>
+#include <cudpp.h>
+
+
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+
+
+#define N (64*256*256) 
+int main(int argc, char* argv[])
+{
+	int numBytes = N * sizeof(float);
+	int i = 0;
+	float* a = new float[N];
+	float* b = new float[N];
+	for (i = 0; i < N; i++)
+		a[i] = 1;;
+	float* adev[2] = { NULL, NULL };
+	cudaEvent_t start, stop;
+	float gpuTime = 0.0f;
+	cudaMalloc((void**)&adev[0], numBytes);
+	cudaMalloc((void**)&adev[1], numBytes);
+
+	CUDPPHandle plan;
+	CUDPPConfiguration config;
+
+	config.algorithm = CUDPP_SCAN;
+	config.op = CUDPP_ADD;
+	config.datatype = CUDPP_FLOAT;
+	config.options = CUDPP_OPTION_FORWARD | CUDPP_OPTION_EXCLUSIVE;
+	cudppPlan(&plan, config, N, 1, 0);
+
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+	cudaMemcpy(adev[0], a, numBytes, cudaMemcpyHostToDevice);
+
+	cudppScan(plan, adev[1], adev[0], N);
+
+	cudaMemcpy(b, adev[1], numBytes, cudaMemcpyDeviceToHost);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&gpuTime, start, stop);
+
+	for (i = 0; i < 3000; i++)
+		if (fabs(b[i] - i) > 0.0001)
+			printf("item at %d diff %f —> (%f %d)\n", i, b[i] - i, b[i], i);
+	printf("\n");
+	printf("time spent executing by the GPU: %.2f milliseconds\n", gpuTime);
+
+	cudppDestroyPlan(plan);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	cudaFree(adev[0]);
+	cudaFree(adev[1]);
+	delete a;
+	delete b;
+	return 0;
+}
