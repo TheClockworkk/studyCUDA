@@ -1,16 +1,13 @@
-#ifndef __CUDACC__ 
-#define __CUDACC__
-#endif
-
-#include <stdio.h>
 #include <stdlib.h>
 #include <cuda.h>
 #include <curand_kernel.h>
 #include <curand.h>
 #include <device_functions.h>
 #include <time.h>
-#include <cudpp.h>
 
+#include "cudpp.h"
+#include "cudpp_util.h"
+#include "cuda_util.h"
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
