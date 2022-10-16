@@ -1,3 +1,8 @@
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+#include <stdio.h>
 #include <stdlib.h>
 #include <cuda.h>
 #include <curand_kernel.h>
@@ -5,63 +10,188 @@
 #include <device_functions.h>
 #include <time.h>
 
-#include "cudpp.h"
-#include "cudpp_util.h"
-#include "cuda_util.h"
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
+//#define SIZE 1024
+//#define SIZE 256
+//#define SIZE 128
+//#define SIZE 64
+//#define SIZE 32
+//#define SIZE 16
+#define SIZE 8
+//#define SIZE 4
+//#define SIZE 2
 
+#define BLOCK_SIZE 256 
 
-#define N (64*256*256) 
+__global__ void setup_kernel(curandState* state)
+{
+    int id = threadIdx.x + blockIdx.x * SIZE;
+    // Each thread gets same seed, a different sequence
+    // Number, no offset, we can got new pseudo-numbers sequence if we will change seed parameter 
+    curand_init(0, id, 0, &state[id]);
+}
+
+__global__ void generate_kernel(curandState* state, float* result)
+{
+    int id = threadIdx.x + blockIdx.x * SIZE;
+    int count = 0;
+    unsigned int x;
+    // Copy state to local memory for efficiency
+    curandState localState = state[id];
+    // Generate pseudo-random unsigned ints based on n. n - measure of digits pow
+    for (int n = 0; n < 1; n++) {
+        x = curand(&localState);
+        // Check if low bit set
+        if (x & 1) { count++; }
+    }
+    // Copy state back to global memory 
+    state[id] = localState;
+    // Store results 
+    result[id] += count;
+}
+
+__global__ void scan1(float* inData, float* outData, int n) {
+    __shared__ float temp[256]; // allocated on invocation    
+    int thid = threadIdx.x;   
+    int pout = 0, pin = 1;   
+    // Not going further
+    // Load input into shared memory.    
+    // This is exclusive scan, so shift right by one    
+    // and set first element to 0
+    temp[pout*n + thid] = (thid > 0) ? inData[thid-1] : 0;
+    __syncthreads();   
+
+    for (int offset = 1; offset < n; offset *= 2)   
+    {    
+        pout = 1 - pout; // swap double buffer indices     
+        pin = 1 - pout;     
+        if (thid >= offset)       
+            temp[pout*n+thid] += temp[pin*n+thid - offset];     
+        else       
+            temp[pout*n+thid] = temp[pin*n+thid];     
+        __syncthreads();   
+    }  
+    //working
+    //printf("%f ", temp[pout * n + thid]);
+    //problem somewhere down here
+    outData[thid] = temp[pout*n+thid]; // write output 
+
+}
+
+__global__ void scan(float* inData, float* outData, int n)
+{
+    __shared__ float temp[256];
+    int thid = threadIdx.x;
+    int offset = 1;
+    temp[2 * thid] = inData[2 * thid]; // load input into shared memory 
+    temp[2 * thid + 1] = inData[2 * thid + 1];
+    for (int d = n >> 1; d > 0; d >>= 1)
+    {
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = offset * (2 * thid + 1) - 1;
+            int bi = offset * (2 * thid + 2) - 1;
+            temp[bi] += temp[ai];
+        }
+
+        offset *= 2;
+    }
+
+    if (thid == 0)
+    {
+        temp[n - 1] = 0;
+    }
+
+    for (int d = 1; d < n; d *= 2) // traverse down tree & build scan 
+    {
+        offset >>= 1;
+        __syncthreads();
+
+        if (thid < d)
+        {
+            int ai = offset * (2 * thid + 1) - 1;
+            int bi = offset * (2 * thid + 2) - 1;
+            float t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+    __syncthreads();
+
+    outData[2 * thid] = temp[2 * thid]; // write results to device memory      
+    outData[2 * thid + 1] = temp[2 * thid + 1];
+}
+
 int main(int argc, char* argv[])
 {
-	int numBytes = N * sizeof(float);
-	int i = 0;
-	float* a = new float[N];
-	float* b = new float[N];
-	for (i = 0; i < N; i++)
-		a[i] = 1;;
-	float* adev[2] = { NULL, NULL };
-	cudaEvent_t start, stop;
-	float gpuTime = 0.0f;
-	cudaMalloc((void**)&adev[0], numBytes);
-	cudaMalloc((void**)&adev[1], numBytes);
+    // Pseudo-random variables
+    int i;
+    curandState* devStates;
+    float* devResults, * hostResults;
 
-	CUDPPHandle plan;
-	CUDPPConfiguration config;
+    // Allocate space for results on host
+    hostResults = (float*)calloc(SIZE * SIZE, sizeof(float));
+    // Allocate space for results on device
+    cudaMalloc((void**)&devResults, SIZE * SIZE * sizeof(float));
+    // Set results to 0
+    cudaMemset(devResults, 0, SIZE * SIZE * sizeof(float));
+    // Allocate space for prng states on device
+    cudaMalloc((void**)&devStates, SIZE * SIZE * sizeof(curandState));
 
-	config.algorithm = CUDPP_SCAN;
-	config.op = CUDPP_ADD;
-	config.datatype = CUDPP_FLOAT;
-	config.options = CUDPP_OPTION_FORWARD | CUDPP_OPTION_EXCLUSIVE;
-	cudppPlan(&plan, config, N, 1, 0);
+    //Setup prng states
+    setup_kernel << < SIZE, SIZE >> > (devStates);
+    // Generate and use pseudo-random. i from 0 to 9 means we will generate 0 - 9 numbers 
+    for (i = 0; i < 9; i++) {
+        generate_kernel << < SIZE, SIZE >> > (devStates, devResults);
+        cudaDeviceSynchronize();
+    }// Copy device memory to host
+    cudaDeviceSynchronize();
+    cudaMemcpy(hostResults, devResults, SIZE * SIZE * sizeof(float), cudaMemcpyDeviceToHost);
+    // Show result - always fixed, based on seed from setup_kernel
 
-	cudaEventCreate(&start);
-	cudaEventCreate(&stop);
-	cudaEventRecord(start, 0);
-	cudaMemcpy(adev[0], a, numBytes, cudaMemcpyHostToDevice);
 
-	cudppScan(plan, adev[1], adev[0], N);
+    //printf("Generated array:\n");
+    int total = 0;
+    int count = 0;
+    for (i = 0; i < SIZE * SIZE; i++) {
+        total += hostResults[i];
+        printf("%f ", hostResults[i]);
+        count++;
+    }
 
-	cudaMemcpy(b, adev[1], numBytes, cudaMemcpyDeviceToHost);
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&gpuTime, start, stop);
+    //printf("\n\nCount of elements - %d\n", count);
+    printf("\n");
+    float* hostResultsForScan, * devResultsForScan;
 
-	for (i = 0; i < 3000; i++)
-		if (fabs(b[i] - i) > 0.0001)
-			printf("item at %d diff %f —> (%f %d)\n", i, b[i] - i, b[i], i);
-	printf("\n");
-	printf("time spent executing by the GPU: %.2f milliseconds\n", gpuTime);
+    // Allocate space for results on host
+    hostResultsForScan = (float*)calloc(SIZE * SIZE, sizeof(float));
 
-	cudppDestroyPlan(plan);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
-	cudaFree(adev[0]);
-	cudaFree(adev[1]);
-	delete a;
-	delete b;
-	return 0;
+    // memory allocation for scan function
+    cudaMalloc((void**)&devResultsForScan, SIZE * SIZE * sizeof(float));
+    cudaMemset(devResultsForScan, 0, SIZE * SIZE * sizeof(float));
+
+    //printf("\nScan results device:\n");
+    scan << < 64, 64 >> > (devResults, devResultsForScan, SIZE * SIZE);
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(hostResultsForScan, devResultsForScan, SIZE * SIZE * sizeof(float), cudaMemcpyDeviceToHost);
+    total = 0;
+
+    printf("\nScan results host:\n");
+
+    for (i = 0; i < SIZE * SIZE; i++) {
+        total += hostResultsForScan[i];
+        printf("%f ", hostResultsForScan[i]);
+    }
+    printf("\n\nScan sum: %f\n", total);
+
+    cudaFree(devStates);
+    cudaFree(devResults);
+    cudaFree(devResultsForScan);
+    free(hostResults);
+    free(hostResultsForScan);
+    return EXIT_SUCCESS;
 }
