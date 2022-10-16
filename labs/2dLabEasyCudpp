@@ -121,8 +121,8 @@ __global__ void scanNormal(float* inData, float* outData, int n)
     }
     __syncthreads();
 
-    outData[2 * thid] = temp[2 * thid]; // write results to device memory      
-    outData[2 * thid + 1] = temp[2 * thid + 1];
+    outData[2 * thid] = pow(temp[2 * thid],2); // write results to device memory      
+    outData[2 * thid + 1] = pow(temp[2 * thid + 1],2);
 }
 
 int main(int argc, char* argv[])
@@ -178,7 +178,7 @@ int main(int argc, char* argv[])
     cudaDeviceSynchronize();
 
     cudaMemcpy(hostResultsForScan, devResultsForScan, SIZE * SIZE * sizeof(float), cudaMemcpyDeviceToHost);
-    total = 0;
+    double totalScan = 0;
 
     printf("\nScan results host:\n");
 
@@ -186,7 +186,7 @@ int main(int argc, char* argv[])
         total += hostResultsForScan[i];
         printf("%f ", hostResultsForScan[i]);
     }
-    printf("\n\nScan sum: %f\n", total);
+    printf("\n\nScan sum: %f\n", totalScan);
 
     cudaFree(devStates);
     cudaFree(devResults);
