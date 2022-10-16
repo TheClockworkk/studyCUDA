@@ -52,7 +52,7 @@ __global__ void generate_kernel(curandState* state, float* result)
     result[id] += count;
 }
 
-__global__ void scan1(float* inData, float* outData, int n) {
+__global__ void scanBasicEasy(float* inData, float* outData, int n) {
     __shared__ float temp[256]; // allocated on invocation    
     int thid = threadIdx.x;   
     int pout = 0, pin = 1;   
@@ -80,7 +80,7 @@ __global__ void scan1(float* inData, float* outData, int n) {
 
 }
 
-__global__ void scan(float* inData, float* outData, int n)
+__global__ void scanNormal(float* inData, float* outData, int n)
 {
     __shared__ float temp[256];
     int thid = threadIdx.x;
@@ -174,7 +174,7 @@ int main(int argc, char* argv[])
     cudaMemset(devResultsForScan, 0, SIZE * SIZE * sizeof(float));
 
     //printf("\nScan results device:\n");
-    scan << < 64, 64 >> > (devResults, devResultsForScan, SIZE * SIZE);
+    scanNormal << < 64, 64 >> > (devResults, devResultsForScan, SIZE * SIZE);
     cudaDeviceSynchronize();
 
     cudaMemcpy(hostResultsForScan, devResultsForScan, SIZE * SIZE * sizeof(float), cudaMemcpyDeviceToHost);
