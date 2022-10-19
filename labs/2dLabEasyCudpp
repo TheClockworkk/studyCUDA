@@ -85,8 +85,8 @@ __global__ void scanNormal(float* inData, float* outData, int n)
     __shared__ float temp[256];
     int thid = threadIdx.x;
     int offset = 1;
-    temp[2 * thid] = inData[2 * thid]; // load input into shared memory 
-    temp[2 * thid + 1] = inData[2 * thid + 1];
+    temp[2 * thid] = pow(inData[2 * thid],2); // load input into shared memory 
+    temp[2 * thid + 1] = pow(inData[2 * thid + 1],2);
     for (int d = n >> 1; d > 0; d >>= 1)
     {
         __syncthreads();
@@ -121,8 +121,11 @@ __global__ void scanNormal(float* inData, float* outData, int n)
     }
     __syncthreads();
 
-    outData[2 * thid] = pow(temp[2 * thid],2); // write results to device memory      
-    outData[2 * thid + 1] = pow(temp[2 * thid + 1],2);
+    outData[2 * thid] = temp[2 * thid]; // write results to device memory      
+    outData[2 * thid + 1] = temp[2 * thid + 1];
+
+    /*outData[2 * thid] = pow(temp[2 * thid], 2); // write results to device memory      
+    outData[2 * thid + 1] = pow(temp[2 * thid + 1],2);*/
 }
 
 int main(int argc, char* argv[])
